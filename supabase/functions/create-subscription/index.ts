@@ -86,9 +86,9 @@ serve(async (req) => {
       description = 'Arukin PRO - 1-Week License';
     }
 
-    // Generate standard Razorpay payment link
+    // Generate standard Razorpay Order
     const authString = btoa(`${keyId}:${keySecret}`);
-    const rzpayRes = await fetch('https://api.razorpay.com/v1/payment_links', {
+    const rzpayRes = await fetch('https://api.razorpay.com/v1/orders', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -97,19 +97,11 @@ serve(async (req) => {
       body: JSON.stringify({
         amount: amount,
         currency: 'INR',
-        accept_partial: false,
-        reference_id: `sub_${auditor_id}_${Date.now()}`,
-        description: description,
-        customer: {
-          email: auditor.email
-        },
-        notify: {
-          email: true
-        },
-        reminder_enable: true,
+        receipt: `rcpt_${auditor_id}_${Date.now()}`,
         notes: {
           auditor_id: auditor_id,
-          action: action
+          action: action,
+          email: auditor.email
         }
       })
     });
