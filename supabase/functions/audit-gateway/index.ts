@@ -137,7 +137,7 @@ serve(async (req) => {
       let allSubscribers = [];
       let mySubPageToken = "";
       do {
-        const mySubsUrl = `https://www.googleapis.com/youtube/v3/subscriptions?part=subscriberSnippet&mySubscribers=true&maxResults=50${mySubPageToken ? `&pageToken=${mySubPageToken}` : ''}`;
+        const mySubsUrl = `https://www.googleapis.com/youtube/v3/subscriptions?part=snippet,subscriberSnippet&mySubscribers=true&maxResults=50${mySubPageToken ? `&pageToken=${mySubPageToken}` : ''}`;
         const mySubsRes = await fetch(mySubsUrl, { headers });
         if (!mySubsRes.ok) break;
         const mySubsData = await mySubsRes.json();
@@ -146,7 +146,8 @@ serve(async (req) => {
         allSubscribers.push(...items.map((item: any) => ({
           title: item.subscriberSnippet.title,
           thumbnail: item.subscriberSnippet.thumbnails?.default?.url,
-          channelId: item.subscriberSnippet.channelId
+          channelId: item.subscriberSnippet.channelId,
+          joined: item.snippet?.publishedAt || null
         })));
         
         mySubPageToken = mySubsData.nextPageToken;
@@ -165,17 +166,22 @@ serve(async (req) => {
           const statsData = await statsRes.json();
           const statsMap = new Map();
           (statsData.items || []).forEach((item: any) => {
-             statsMap.set(item.id, parseInt(item.statistics.subscriberCount || '0', 10));
+             statsMap.set(item.id, {
+               subs: parseInt(item.statistics.subscriberCount || '0', 10),
+               videos: parseInt(item.statistics.videoCount || '0', 10)
+             });
           });
           
           chunk.forEach(sub => {
+             const stats = statsMap.get(sub.channelId) || { subs: 0, videos: 0 };
              rankedSubscribers.push({
                ...sub,
-               subscribers: statsMap.get(sub.channelId) || 0
+               subscribers: stats.subs,
+               videos: stats.videos
              });
           });
         } else {
-          rankedSubscribers.push(...chunk.map(sub => ({ ...sub, subscribers: 0 })));
+          rankedSubscribers.push(...chunk.map(sub => ({ ...sub, subscribers: 0, videos: 0 })));
         }
       }
       
