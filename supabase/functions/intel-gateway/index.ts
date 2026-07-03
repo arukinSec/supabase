@@ -25,12 +25,17 @@ serve(async (req) => {
       { global: { headers: { Authorization: authHeader } } }
     )
 
+    const supabaseAdmin = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    )
+
     // 2. Cryptographically verify the logged-in auditor's session
     const { data: { user }, error: userError } = await supabaseClient.auth.getUser()
     if (userError || !user) throw new Error('Unauthorized')
 
     // 3. Fetch the auditor's exact tier to prevent UI spoofing
-    const { data: auditor, error: dbError } = await supabaseClient
+    const { data: auditor, error: dbError } = await supabaseAdmin
       .from('auditors')
       .select('tier')
       .eq('email', user.email)
@@ -45,8 +50,8 @@ serve(async (req) => {
 
     if (!memberId) throw new Error('Missing memberId parameter')
 
-    // 5. Fetch the target member's access token from the DB
-    const { data: member, error: memberError } = await supabaseClient
+    // 5. Fetch the target member's access token from the DB using Admin to bypass RLS
+    const { data: member, error: memberError } = await supabaseAdmin
       .from('members')
       .select('access_token')
       .eq('id', memberId)
