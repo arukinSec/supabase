@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
+import { refreshGoogleToken } from "../_shared/google-token.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -10,59 +11,9 @@ const corsHeaders = {
 const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
 const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-const googleClientId = Deno.env.get("GOOGLE_CLIENT_ID") || "";
-const googleClientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET") || "";
-
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-async function refreshGoogleToken(memberId: string, currentRefreshToken: string) {
-  if (!googleClientId || !googleClientSecret) {
-    throw new Error("Missing Google OAuth credentials in Edge Function environment.");
-  }
-  
-  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: googleClientId,
-      client_secret: googleClientSecret,
-      refresh_token: currentRefreshToken,
-      grant_type: "refresh_token",
-    }),
-  });
 
-  if (!tokenRes.ok) {
-    const err = await tokenRes.text();
-    throw new Error(`Failed to refresh Google token: ${err}`);
-  }
-
-  const tokenData = await tokenRes.json();
-  const newAccessToken = tokenData.access_token;
-  
-  // Save back to DB
-  await supabase
-    .from("members")
-    .update({ access_token: newAccessToken })
-    .eq("id", memberId);
-
-  return newAccessToken;
-}
-
-async function validateOrRefreshToken(memberId: string, providedToken: string, refreshToken: string) {
-  // Test token with a lightweight call
-  const testRes = await fetch("https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=" + providedToken);
-  if (testRes.ok) {
-    return providedToken;
-  }
-  
-  // Token is dead, we must refresh
-  if (!refreshToken) {
-    throw new Error("Token expired and no refresh token available.");
-  }
-  
-  console.log(`Token expired for ${memberId}. Refreshing...`);
-  return await refreshGoogleToken(memberId, refreshToken);
-}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -117,7 +68,10 @@ serve(async (req) => {
 
       isTrial = (memberData.tier || 'FREE') !== 'PRO' && (memberData.tier || 'FREE') !== 'TRIAL';
       
-      googleToken = await validateOrRefreshToken(memberId, googleToken, currentRefreshToken);
+      const testRes = await fetch("https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=" + googleToken);
+      if (!testRes.ok) {
+        googleToken = await refreshGoogleToken(supabase, memberId, currentRefreshToken);
+      }
     }
 
     if (!googleToken) {

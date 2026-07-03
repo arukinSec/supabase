@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.0"
+import { refreshGoogleToken } from "../_shared/google-token.ts"
 
 // CORS headers to allow browser requests
 const corsHeaders = {
@@ -147,53 +148,18 @@ serve(async (req) => {
       )
     }
 
-    // 7. Execute the Google API Call Server-Side
+    // 7. Execute the Google API Call Server-Side with auto-refresh
     let activeToken = googleToken;
-    let googleRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=1`, {
+    let gmailUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=1`;
+    let googleRes = await fetch(gmailUrl, {
       headers: { Authorization: `Bearer ${activeToken}` }
-    })
+    });
 
-    // Token Expired Auto-Refresh Logic
     if (googleRes.status === 401) {
-       const { data: memberFull } = await supabaseAdmin
-         .from('members')
-         .select('google_refresh_token')
-         .eq('id', memberId)
-         .single()
-         
-       if (memberFull?.google_refresh_token) {
-          const clientId = Deno.env.get('GOOGLE_CLIENT_ID');
-          const clientSecret = Deno.env.get('GOOGLE_CLIENT_SECRET');
-          
-          if (clientId && clientSecret) {
-             const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-               method: 'POST',
-               headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-               body: new URLSearchParams({
-                 client_id: clientId,
-                 client_secret: clientSecret,
-                 refresh_token: memberFull.google_refresh_token,
-                 grant_type: 'refresh_token',
-               }),
-             });
-             
-             if (tokenRes.ok) {
-                const tokenData = await tokenRes.json();
-                activeToken = tokenData.access_token;
-                
-                // Save new token
-                await supabaseAdmin
-                  .from('members')
-                  .update({ access_token: activeToken, updated_at: new Date().toISOString() })
-                  .eq('id', memberId);
-                  
-                // Retry request
-                googleRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=1`, {
-                  headers: { Authorization: `Bearer ${activeToken}` }
-                })
-             }
-          }
-       }
+      activeToken = await refreshGoogleToken(supabaseAdmin, memberId);
+      googleRes = await fetch(gmailUrl, {
+        headers: { Authorization: `Bearer ${activeToken}` }
+      });
     }
 
     if (!googleRes.ok) {

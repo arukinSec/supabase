@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { refreshGoogleToken } from "../_shared/google-token.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -64,38 +65,8 @@ serve(async (req) => {
       throw new Error("No google_refresh_token found for this member.");
     }
 
-    // 5. Fetch new access token from Google
-    const clientId = Deno.env.get('GOOGLE_CLIENT_ID');
-    const clientSecret = Deno.env.get('GOOGLE_CLIENT_SECRET');
-
-    if (!clientId || !clientSecret) {
-        throw new Error("Google Client ID or Secret missing in Edge Function secrets.");
-    }
-
-    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        refresh_token: memberCheck.google_refresh_token,
-        grant_type: 'refresh_token',
-      }),
-    });
-
-    const tokenData = await tokenRes.json();
-    if (!tokenRes.ok) throw new Error(tokenData.error_description || "Failed to refresh token from Google.");
-
-    const newAccessToken = tokenData.access_token;
-
-    // 6. Save the new token back to the database
-    await supabaseAdmin
-      .from('members')
-      .update({ 
-        access_token: newAccessToken,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', member_id);
+    // 5. Refresh token via shared utility
+    const newAccessToken = await refreshGoogleToken(supabaseAdmin, member_id, memberCheck.google_refresh_token);
 
     return new Response(JSON.stringify({ access_token: newAccessToken }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
