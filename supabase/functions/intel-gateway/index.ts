@@ -47,9 +47,67 @@ serve(async (req) => {
     const tier = auditor?.tier || 'FREE'
 
     // 4. Parse the requested intelligence scan
-    const { scanType, query, memberId, deepScan } = await req.json()
+    const { scanType, query, memberId, deepScan, platformId = 'unknown', action } = await req.json()
+
+    if (action === 'get_usage') {
+      const startOfMonth = new Date();
+      startOfMonth.setDate(1);
+      startOfMonth.setHours(0, 0, 0, 0);
+      
+      const { data: usageLogs, error: usageError } = await supabaseAdmin
+        .from('usage_logs')
+        .select('scan_type, platform, member_id')
+        .eq('auditor_id', auditorId)
+        .gte('created_at', startOfMonth.toISOString());
+        
+      if (usageError) throw usageError;
+      
+      return new Response(JSON.stringify({ usage: usageLogs }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    const actualScanType = deepScan ? 'insight_scan' : scanType; // e.g. 'social_scan', 'insight_scan'
 
     if (!memberId) throw new Error('Missing memberId parameter')
+
+    // 4b. Enforce Rate Limits via usage_logs
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
+
+    const { count, error: countError } = await supabaseAdmin
+      .from('usage_logs')
+      .select('*', { count: 'exact', head: true })
+      .eq('auditor_id', auditorId)
+      .eq('scan_type', actualScanType)
+      .eq('platform', platformId)
+      .gte('created_at', startOfMonth.toISOString());
+
+    if (!countError && count !== null) {
+      if (tier === 'FREE') {
+        if (actualScanType === 'insight_scan' && count >= 1) {
+          return new Response(JSON.stringify({ error: 'Monthly insight scan limit reached for this platform. Upgrade to PRO for 5x capacity.' }), { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+        if (actualScanType !== 'insight_scan' && count >= 2) {
+          return new Response(JSON.stringify({ error: 'Monthly footprint scan limit reached for this platform. Upgrade to PRO for 10x capacity.' }), { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+      } else {
+        // PRO tier
+        if (actualScanType === 'insight_scan' && count >= 5) {
+          return new Response(JSON.stringify({ error: 'Monthly PRO insight scan limit reached for this platform.' }), { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+        if (actualScanType !== 'insight_scan' && count >= 10) {
+          return new Response(JSON.stringify({ error: 'Monthly PRO footprint scan limit reached for this platform.' }), { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+      }
+    }
+
+    // Insert usage log (fire and forget conceptually, but we await it for safety)
+    await supabaseAdmin.from('usage_logs').insert({
+      auditor_id: auditorId,
+      member_id: memberId,
+      scan_type: actualScanType,
+      platform: platformId
+    });
 
     // 5. Fetch the target member's access token from the DB using Admin to bypass RLS
     const { data: member, error: memberError } = await supabaseAdmin

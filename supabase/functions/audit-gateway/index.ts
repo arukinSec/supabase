@@ -1,7 +1,5 @@
-// Arukin Secure Proxy Edge Function
-// Handles secure server-side data fetching and trial-plan redactions
-
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -9,25 +7,205 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+const googleClientId = Deno.env.get("GOOGLE_CLIENT_ID") || "";
+const googleClientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET") || "";
+
+const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+async function refreshGoogleToken(memberId: string, currentRefreshToken: string) {
+  if (!googleClientId || !googleClientSecret) {
+    throw new Error("Missing Google OAuth credentials in Edge Function environment.");
+  }
+  
+  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: googleClientId,
+      client_secret: googleClientSecret,
+      refresh_token: currentRefreshToken,
+      grant_type: "refresh_token",
+    }),
+  });
+
+  if (!tokenRes.ok) {
+    const err = await tokenRes.text();
+    throw new Error(`Failed to refresh Google token: ${err}`);
+  }
+
+  const tokenData = await tokenRes.json();
+  const newAccessToken = tokenData.access_token;
+  
+  // Save back to DB
+  await supabase
+    .from("members")
+    .update({ access_token: newAccessToken })
+    .eq("id", memberId);
+
+  return newAccessToken;
+}
+
+async function validateOrRefreshToken(memberId: string, providedToken: string, refreshToken: string) {
+  // Test token with a lightweight call
+  const testRes = await fetch("https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=" + providedToken);
+  if (testRes.ok) {
+    return providedToken;
+  }
+  
+  // Token is dead, we must refresh
+  if (!refreshToken) {
+    throw new Error("Token expired and no refresh token available.");
+  }
+  
+  console.log(`Token expired for ${memberId}. Refreshing...`);
+  return await refreshGoogleToken(memberId, refreshToken);
+}
+
 serve(async (req) => {
-  // Handle CORS Preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   try {
-    const { action, googleToken, email, plan = "free", params = {} } = await req.json();
+    const payload = await req.json();
+    const { action, memberId, plan = "free", params = {} } = payload;
+    
+    // Fallback if frontend still sends googleToken and email (for legacy reasons during migration)
+    let { googleToken, email } = payload;
+    const isTrial = plan === "free";
+
+    // If memberId is provided, we fetch their real tokens from the DB
+    let currentRefreshToken = "";
+    if (memberId) {
+      const { data: memberData, error: memberErr } = await supabase
+        .from("members")
+        .select("access_token, google_refresh_token, email")
+        .eq("id", memberId)
+        .single();
+        
+      if (memberErr || !memberData) {
+        throw new Error("Could not find member in database.");
+      }
+      
+      googleToken = memberData.access_token;
+      currentRefreshToken = memberData.google_refresh_token;
+      email = memberData.email;
+      
+      // Attempt to refresh token if it's dead
+      googleToken = await validateOrRefreshToken(memberId, googleToken, currentRefreshToken);
+    }
 
     if (!googleToken) {
-      return new Response(JSON.stringify({ error: "Missing googleToken parameter" }), {
+      return new Response(JSON.stringify({ error: "Missing authentication token. Cannot proceed." }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const isTrial = plan === "free";
+    if (action === "fetch-youtube") {
+      const headers = { Authorization: `Bearer ${googleToken}` };
+      
+      // 1. Fetch Master Channel Info
+      const channelRes = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics,brandingSettings,contentDetails&mine=true', { headers });
+      const channelData = await channelRes.json();
+      const channel = channelData.items?.[0] || null;
 
-    // Route actions
+      if (!channel) {
+         throw new Error("No YouTube channel found for this account.");
+      }
+
+      // 2. Fetch all Subscriptions (who they are subscribed to)
+      let allSubscriptions = [];
+      let subPageToken = "";
+      do {
+        const subsUrl = `https://www.googleapis.com/youtube/v3/subscriptions?part=snippet&mine=true&maxResults=50${subPageToken ? `&pageToken=${subPageToken}` : ''}`;
+        const subsRes = await fetch(subsUrl, { headers });
+        if (!subsRes.ok) break;
+        const subsData = await subsRes.json();
+        const items = subsData.items || [];
+        allSubscriptions.push(...items.map((item: any) => ({
+          title: item.snippet.title,
+          thumbnail: item.snippet.thumbnails?.default?.url,
+          channelId: item.snippet.resourceId?.channelId
+        })));
+        subPageToken = subsData.nextPageToken;
+      } while (subPageToken && allSubscriptions.length < 1000);
+
+      // 3. Fetch all Subscribers (who is subscribed to them)
+      let allSubscribers = [];
+      let mySubPageToken = "";
+      do {
+        const mySubsUrl = `https://www.googleapis.com/youtube/v3/subscriptions?part=subscriberSnippet&mySubscribers=true&maxResults=50${mySubPageToken ? `&pageToken=${mySubPageToken}` : ''}`;
+        const mySubsRes = await fetch(mySubsUrl, { headers });
+        if (!mySubsRes.ok) break;
+        const mySubsData = await mySubsRes.json();
+        const items = mySubsData.items || [];
+        
+        allSubscribers.push(...items.map((item: any) => ({
+          title: item.subscriberSnippet.title,
+          thumbnail: item.subscriberSnippet.thumbnails?.default?.url,
+          channelId: item.subscriberSnippet.channelId
+        })));
+        
+        mySubPageToken = mySubsData.nextPageToken;
+      } while (mySubPageToken && allSubscribers.length < 1000); // hard limit 1000
+
+      // 4. Batch Influence Analyzer (fetch sub counts for our subscribers)
+      // Break into chunks of 50
+      const rankedSubscribers = [];
+      for (let i = 0; i < allSubscribers.length; i += 50) {
+        const chunk = allSubscribers.slice(i, i + 50);
+        const ids = chunk.map(s => s.channelId).join(',');
+        
+        const statsUrl = `https://www.googleapis.com/youtube/v3/channels?part=statistics&id=${ids}&maxResults=50`;
+        const statsRes = await fetch(statsUrl, { headers });
+        if (statsRes.ok) {
+          const statsData = await statsRes.json();
+          const statsMap = new Map();
+          (statsData.items || []).forEach((item: any) => {
+             statsMap.set(item.id, parseInt(item.statistics.subscriberCount || '0', 10));
+          });
+          
+          chunk.forEach(sub => {
+             rankedSubscribers.push({
+               ...sub,
+               subscribers: statsMap.get(sub.channelId) || 0
+             });
+          });
+        } else {
+          rankedSubscribers.push(...chunk.map(sub => ({ ...sub, subscribers: 0 })));
+        }
+      }
+      
+      // Sort rankedSubscribers by influence (descending)
+      rankedSubscribers.sort((a, b) => b.subscribers - a.subscribers);
+
+      // 5. Fetch Playlists
+      let allPlaylists = [];
+      const plRes = await fetch('https://www.googleapis.com/youtube/v3/playlists?part=snippet,status&mine=true&maxResults=50', { headers });
+      if (plRes.ok) {
+        const plData = await plRes.json();
+        allPlaylists = (plData.items || []).map((item: any) => ({
+          title: item.snippet.title,
+          thumbnail: item.snippet.thumbnails?.medium?.url || item.snippet.thumbnails?.default?.url,
+          status: item.status.privacyStatus,
+          id: item.id
+        }));
+      }
+
+      return new Response(JSON.stringify({
+        channel,
+        subscriptions: allSubscriptions,
+        subscribers: rankedSubscribers,
+        playlists: allPlaylists
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Gmail routing
     if (action === "fetch-emails") {
       const { pageToken = "", activeFolder = "INBOX", query = "", showAdvancedSearch = false, searchFilters = {} } = params;
 
@@ -85,26 +263,17 @@ serve(async (req) => {
           const fromHeader = detail.payload.headers.find((h: { name: string }) => h.name.toLowerCase() === "from");
           const dateHeader = detail.payload.headers.find((h: { name: string }) => h.name.toLowerCase() === "date");
 
-          // Recursive body extractor
           const getBody = (payload: any): string => {
             if (!payload) return "";
             if (payload.body && payload.body.data) {
               const base64 = payload.body.data.replace(/-/g, "+").replace(/_/g, "/");
-              try {
-                return decodeURIComponent(escape(atob(base64)));
-              } catch {
-                return atob(base64);
-              }
+              try { return decodeURIComponent(escape(atob(base64))); } catch { return atob(base64); }
             }
             if (payload.parts) {
               for (const part of payload.parts) {
                 if (part.mimeType === "text/plain" && part.body && part.body.data) {
                   const base64 = part.body.data.replace(/-/g, "+").replace(/_/g, "/");
-                  try {
-                    return decodeURIComponent(escape(atob(base64)));
-                  } catch {
-                    return atob(base64);
-                  }
+                  try { return decodeURIComponent(escape(atob(base64))); } catch { return atob(base64); }
                 }
                 const nested = getBody(part);
                 if (nested) return nested;
@@ -117,7 +286,6 @@ serve(async (req) => {
           const fromVal = fromHeader ? fromHeader.value : "Unknown Sender";
           const subjectVal = subjectHeader ? subjectHeader.value : "(No Subject)";
 
-          // Trigger Redaction check for free/trial plans
           const shouldRedact = isTrial && (
             fromVal.toLowerCase().includes("facebook") ||
             fromVal.toLowerCase().includes("instagram") ||
@@ -169,22 +337,15 @@ serve(async (req) => {
 
       let driveUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
 
-      // Handle export of Google Workspace docs
       if (mimeType && (mimeType.includes("vnd.google-apps") || !mimeType.includes("/"))) {
         let exportMime = "application/pdf";
-        if (mimeType.includes("document")) {
-          exportMime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-        } else if (mimeType.includes("spreadsheet")) {
-          exportMime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-        } else if (mimeType.includes("presentation")) {
-          exportMime = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
-        }
+        if (mimeType.includes("document")) exportMime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        else if (mimeType.includes("spreadsheet")) exportMime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        else if (mimeType.includes("presentation")) exportMime = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
         driveUrl = `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=${encodeURIComponent(exportMime)}`;
       }
 
-      const fileRes = await fetch(driveUrl, {
-        headers: { Authorization: `Bearer ${googleToken}` },
-      });
+      const fileRes = await fetch(driveUrl, { headers: { Authorization: `Bearer ${googleToken}` } });
 
       if (!fileRes.ok) {
         const errorText = await fileRes.text();
@@ -204,13 +365,13 @@ serve(async (req) => {
       });
     }
 
-    // Default Fallback Response
     return new Response(JSON.stringify({ error: `Action '${action}' not supported` }), {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
   } catch (error) {
+    console.error("Gateway Error:", error);
     return new Response(JSON.stringify({ error: (error as Error).message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
