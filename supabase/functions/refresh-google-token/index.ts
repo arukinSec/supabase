@@ -66,9 +66,9 @@ serve(async (req) => {
     }
 
     // 5. Refresh token via shared utility
-    const newAccessToken = await refreshGoogleToken(supabaseAdmin, member_id, memberCheck.google_refresh_token);
+    await refreshGoogleToken(supabaseAdmin, member_id, memberCheck.google_refresh_token);
 
-    return new Response(JSON.stringify({ access_token: newAccessToken }), {
+    return new Response(JSON.stringify({ success: true, message: "Token refreshed securely." }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
