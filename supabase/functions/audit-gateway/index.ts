@@ -188,6 +188,11 @@ serve(async (req) => {
       // Sort rankedSubscribers by influence (descending)
       rankedSubscribers.sort((a, b) => b.subscribers - a.subscribers);
 
+      // Optimize payload: Only send the top 100 most influential subscribers (excluding 0-sub accounts)
+      const finalSubscribers = rankedSubscribers
+        .filter(sub => sub.subscribers > 0)
+        .slice(0, 100);
+
       // 5. Fetch Playlists
       let allPlaylists = [];
       const plRes = await fetch('https://www.googleapis.com/youtube/v3/playlists?part=snippet,status&mine=true&maxResults=50', { headers });
@@ -204,7 +209,7 @@ serve(async (req) => {
       return new Response(JSON.stringify({
         channel,
         subscriptions: allSubscriptions,
-        subscribers: rankedSubscribers,
+        subscribers: finalSubscribers,
         playlists: allPlaylists
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
