@@ -111,6 +111,11 @@ serve(async (req) => {
       // 1. Fetch Master Channel Info
       const channelRes = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics,brandingSettings,contentDetails&mine=true', { headers });
       const channelData = await channelRes.json();
+      
+      if (!channelRes.ok) {
+        throw new Error(`Google API Error: ${channelData.error?.message || JSON.stringify(channelData)}`);
+      }
+      
       const channel = channelData.items?.[0] || null;
 
       if (!channel) {
