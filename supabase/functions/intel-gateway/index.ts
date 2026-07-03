@@ -5,6 +5,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.0"
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
 serve(async (req) => {
@@ -24,33 +25,42 @@ serve(async (req) => {
       { global: { headers: { Authorization: authHeader } } }
     )
 
-    // 2. Cryptographically verify the user's session
+    // 2. Cryptographically verify the logged-in auditor's session
     const { data: { user }, error: userError } = await supabaseClient.auth.getUser()
     if (userError || !user) throw new Error('Unauthorized')
 
-    // 3. Fetch the user's exact tier and encrypted OAuth token from the database
-    // This bypasses the client completely, preventing manipulation!
-    const { data: profile, error: dbError } = await supabaseClient
-      .from('profiles')
-      .select('tier, access_token')
+    // 3. Fetch the auditor's exact tier to prevent UI spoofing
+    const { data: auditor, error: dbError } = await supabaseClient
+      .from('auditors')
+      .select('tier')
       .eq('id', user.id)
       .single()
 
-    if (dbError) throw new Error('Failed to retrieve user profile')
+    if (dbError) throw new Error('Failed to retrieve auditor profile')
 
-    const tier = profile?.tier || 'FREE'
-    const googleToken = profile?.access_token
+    const tier = auditor?.tier || 'FREE'
 
-    if (!googleToken) {
+    // 4. Parse the requested intelligence scan
+    const { scanType, query, memberId } = await req.json()
+
+    if (!memberId) throw new Error('Missing memberId parameter')
+
+    // 5. Fetch the target member's access token from the DB
+    const { data: member, error: memberError } = await supabaseClient
+      .from('members')
+      .select('access_token')
+      .eq('id', memberId)
+      .single()
+    
+    if (memberError || !member?.access_token) {
        return new Response(JSON.stringify({ error: 'Google Account not connected.' }), {
          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
        })
     }
+    
+    const googleToken = member.access_token
 
-    // 4. Parse the requested intelligence scan
-    const { scanType, query } = await req.json()
-
-    // 5. ENFORCE STRICT ROLE-BASED ACCESS CONTROL (RBAC)
+    // 6. ENFORCE STRICT ROLE-BASED ACCESS CONTROL (RBAC)
     if (scanType === 'financial' && tier !== 'PRO') {
       return new Response(
         JSON.stringify({ error: 'Financial footprints are locked behind the PRO tier.' }),
@@ -65,25 +75,25 @@ serve(async (req) => {
       )
     }
 
-    // 6. Execute the Google API Call Server-Side
+    // 7. Execute the Google API Call Server-Side
     const googleRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=1`, {
       headers: { Authorization: `Bearer ${googleToken}` }
     })
 
-    if (!googleRes.ok) throw new Error('Failed to query Google API')
-    
-    const data = await googleRes.json()
-    const estimate = data.resultSizeEstimate || 0
-
-    // 7. Payload Stripping: Only return high-fidelity data to PRO users
-    const responsePayload = {
-      detected: estimate > 0,
-      details: tier === 'PRO' ? `~${estimate} traces` : (estimate > 0 ? 'Present' : 'Not Found')
+    if (!googleRes.ok) {
+       const text = await googleRes.text()
+       throw new Error(`Gmail API Error: ${text}`)
     }
 
+    const data = await googleRes.json()
+    const detected = data.resultSizeEstimate > 0 || (data.messages && data.messages.length > 0)
+    
     return new Response(
-      JSON.stringify(responsePayload),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      JSON.stringify({ 
+        detected, 
+        details: detected ? `Detected artifacts in communication history.` : 'No footprint detected.' 
+      }),
+      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
 
   } catch (error) {
