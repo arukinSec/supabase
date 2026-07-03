@@ -166,12 +166,15 @@ serve(async (req) => {
       // PRO deep scan
       let latestSubject = 'No subject';
       let lastActive = 'Unknown';
+      let targetAlias = 'Unknown';
       let securityFlags = [];
+      let devices = [];
+      let locations = [];
 
-      // 1. Fetch latest message metadata
+      // 1. Fetch latest message metadata (Subject, Date, To)
       if (deepMessages.length > 0) {
          const msgId = deepMessages[0].id;
-         const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgId}?format=metadata&metadataHeaders=Subject&metadataHeaders=Date`, {
+         const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgId}?format=metadata&metadataHeaders=Subject&metadataHeaders=Date&metadataHeaders=To`, {
            headers: { Authorization: `Bearer ${activeToken}` }
          });
          if (msgRes.ok) {
@@ -179,6 +182,11 @@ serve(async (req) => {
             const headers = msgData.payload?.headers || [];
             latestSubject = headers.find((h: {name: string, value: string}) => h.name.toLowerCase() === 'subject')?.value || latestSubject;
             lastActive = headers.find((h: {name: string, value: string}) => h.name.toLowerCase() === 'date')?.value || lastActive;
+            
+            const toHeader = headers.find((h: {name: string, value: string}) => h.name.toLowerCase() === 'to')?.value || '';
+            // Extract just the email address from "Name <email@dom.com>"
+            const emailMatch = toHeader.match(/<([^>]+)>/);
+            targetAlias = emailMatch ? emailMatch[1] : toHeader;
          }
       }
 
@@ -189,8 +197,41 @@ serve(async (req) => {
       });
       if (secRes.ok) {
          const secData = await secRes.json();
-         if (secData.resultSizeEstimate > 0) {
+         if (secData.resultSizeEstimate > 0 && secData.messages?.length > 0) {
             securityFlags.push("Recent security or login alerts detected");
+            
+            // Forensics: Fetch the body of the security alert to extract device/location
+            const secMsgId = secData.messages[0].id;
+            const secMsgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${secMsgId}?format=full`, {
+              headers: { Authorization: `Bearer ${activeToken}` }
+            });
+            if (secMsgRes.ok) {
+               const secMsgData = await secMsgRes.json();
+               // Naive extraction of body text (could be in payload.body or payload.parts)
+               let bodyRaw = secMsgData.payload?.body?.data || '';
+               if (!bodyRaw && secMsgData.payload?.parts) {
+                  const part = secMsgData.payload.parts.find((p: any) => p.mimeType === 'text/plain' || p.mimeType === 'text/html');
+                  bodyRaw = part?.body?.data || '';
+               }
+               
+               if (bodyRaw) {
+                  // Base64url decode
+                  try {
+                     const base64 = bodyRaw.replace(/-/g, '+').replace(/_/g, '/');
+                     const text = atob(base64);
+                     
+                     // Regex for Device
+                     const deviceMatch = text.match(/(?:Windows|Mac OS X|iPhone|iPad|Android|Linux|Chrome OS|Safari|Firefox|Edge)/i);
+                     if (deviceMatch && !devices.includes(deviceMatch[0])) devices.push(deviceMatch[0]);
+                     
+                     // Regex for Location (e.g. near Chicago, IL or Location: Paris, France)
+                     const locMatch = text.match(/(?:near|Location:)\s*([A-Za-z]+,\s*[A-Za-z\s]+)/i);
+                     if (locMatch) locations.push(locMatch[1].trim());
+                  } catch (e) {
+                     console.error("Base64 decode failed for forensics", e);
+                  }
+               }
+            }
          }
       }
       
@@ -212,7 +253,10 @@ serve(async (req) => {
          locked: false,
          latestSubject,
          lastActive,
+         targetAlias,
          securityFlags,
+         devices,
+         locations,
          details: 'Deep scan complete.'
       }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
