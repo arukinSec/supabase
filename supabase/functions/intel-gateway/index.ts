@@ -45,7 +45,7 @@ serve(async (req) => {
     if (dbError) throw new Error('Failed to retrieve auditor profile')
 
     const tier = auditor?.tier || 'FREE'
-    const auditorId = auditor?.id
+    const auditorId = user.id
 
     // 4. Parse the requested intelligence scan
     const { scanType, query, memberId, deepScan, platformId = 'unknown', action } = await req.json()
@@ -103,12 +103,16 @@ serve(async (req) => {
     }
 
     // Insert usage log (fire and forget conceptually, but we await it for safety)
-    await supabaseAdmin.from('usage_logs').insert({
+    const { error: insertError } = await supabaseAdmin.from('usage_logs').insert({
       auditor_id: auditorId,
       member_id: memberId,
       scan_type: actualScanType,
       platform: platformId
     });
+    
+    if (insertError) {
+      console.error("Failed to insert usage log:", insertError);
+    }
 
     // 5. Fetch the target member's access token from the DB using Admin to bypass RLS
     const { data: member, error: memberError } = await supabaseAdmin
