@@ -28,7 +28,8 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    const { data: { user }, error: userError } = await supabaseClient.auth.getUser()
+    const jwt = authHeader.replace('Bearer ', '').trim();
+    const { data: { user }, error: userError } = await supabaseClient.auth.getUser(jwt)
     if (userError || !user) throw new Error('Unauthorized')
 
     const { auditor_id, plan_id, action = 'upgrade' } = await req.json();

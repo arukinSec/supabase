@@ -28,7 +28,8 @@ serve(async (req) => {
     )
 
     // 2. Cryptographically verify the logged-in auditor's session
-    const { data: { user }, error: userError } = await supabaseClient.auth.getUser()
+    const jwt = authHeader.replace('Bearer ', '').trim();
+    const { data: { user }, error: userError } = await supabaseClient.auth.getUser(jwt)
     if (userError || !user) throw new Error('Unauthorized')
 
     // 3. Verify the auditor exists
