@@ -38,7 +38,7 @@ serve(async (req) => {
     // Fetch the auditor's email to prefill/store using Admin bypass
     const { data: auditor, error: dbErr } = await supabaseAdmin
       .from('auditors')
-      .select('id, email')
+      .select('id, email, billing_cycle')
       .eq('email', user.email)
       .single();
 
@@ -81,7 +81,9 @@ serve(async (req) => {
     if (isAddon) {
       amount = 120000; // ₹1,200 for addon slot
       description = 'Arukin PRO - Additional Auditor Slot';
-      if ((proCount || 0) < 1) throw new Error("Cannot add extra slots without a base PRO plan.");
+      if ((proCount || 0) < 1 || auditor.billing_cycle !== 'yearly') {
+        throw new Error("Cannot add extra slots without an Annual PRO plan.");
+      }
     } else if (isWeekly) {
       amount = 49900; // ₹499 for 1 week
       description = 'Arukin PRO - 1-Week License';

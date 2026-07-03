@@ -8,6 +8,7 @@ const corsHeaders = {
 };
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
 const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const googleClientId = Deno.env.get("GOOGLE_CLIENT_ID") || "";
 const googleClientSecret = Deno.env.get("GOOGLE_CLIENT_SECRET") || "";
@@ -69,31 +70,53 @@ serve(async (req) => {
   }
 
   try {
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) throw new Error('Missing Authorization header');
+
+    const supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } }
+    });
+
+    const jwt = authHeader.replace('Bearer ', '').trim();
+    const { data: { user }, error: userError } = await supabaseClient.auth.getUser(jwt);
+    if (userError || !user) throw new Error('Unauthorized');
+
+    const { data: auditor, error: auditorError } = await supabase
+      .from('auditors')
+      .select('id, tier')
+      .eq('email', user.email)
+      .single();
+
+    if (auditorError) throw new Error('Failed to retrieve auditor profile');
+
     const payload = await req.json();
     const { action, memberId, plan = "free", params = {} } = payload;
     
-    // Fallback if frontend still sends googleToken and email (for legacy reasons during migration)
     let { googleToken, email } = payload;
-    const isTrial = plan === "free";
+    let isTrial = plan === "free";
 
-    // If memberId is provided, we fetch their real tokens from the DB
     let currentRefreshToken = "";
     if (memberId) {
       const { data: memberData, error: memberErr } = await supabase
         .from("members")
-        .select("access_token, google_refresh_token, email")
+        .select("access_token, google_refresh_token, email, auditor_id, tier")
         .eq("id", memberId)
         .single();
         
       if (memberErr || !memberData) {
         throw new Error("Could not find member in database.");
       }
+
+      if (memberData.auditor_id && memberData.auditor_id !== auditor.id) {
+        throw new Error("Unauthorized: member does not belong to this auditor");
+      }
       
       googleToken = memberData.access_token;
       currentRefreshToken = memberData.google_refresh_token;
       email = memberData.email;
+
+      isTrial = (memberData.tier || 'FREE') !== 'PRO' && (memberData.tier || 'FREE') !== 'TRIAL';
       
-      // Attempt to refresh token if it's dead
       googleToken = await validateOrRefreshToken(memberId, googleToken, currentRefreshToken);
     }
 
