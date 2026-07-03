@@ -139,12 +139,25 @@ serve(async (req) => {
     const detected = data.resultSizeEstimate > 0 || (data.messages && data.messages.length > 0)
     const volume = data.resultSizeEstimate || 0;
 
+    let exactVolume = volume;
+    let deepMessages = data.messages || [];
+
     // --- DEEP SCAN LOGIC ---
     if (deepScan && detected) {
+      // To get an exact volume count, query up to 500 results
+      const exactRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=500`, {
+        headers: { Authorization: `Bearer ${activeToken}` }
+      });
+      if (exactRes.ok) {
+         const exactData = await exactRes.json();
+         deepMessages = exactData.messages || [];
+         exactVolume = deepMessages.length;
+      }
+
       if (tier !== 'PRO') {
          return new Response(JSON.stringify({
             detected,
-            volume,
+            volume: exactVolume,
             locked: true,
             details: 'Deep scan locked behind PRO tier.'
          }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -156,8 +169,8 @@ serve(async (req) => {
       let securityFlags = [];
 
       // 1. Fetch latest message metadata
-      if (data.messages && data.messages.length > 0) {
-         const msgId = data.messages[0].id;
+      if (deepMessages.length > 0) {
+         const msgId = deepMessages[0].id;
          const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgId}?format=metadata&metadataHeaders=Subject&metadataHeaders=Date`, {
            headers: { Authorization: `Bearer ${activeToken}` }
          });
@@ -195,7 +208,7 @@ serve(async (req) => {
 
       return new Response(JSON.stringify({
          detected,
-         volume,
+         volume: exactVolume,
          locked: false,
          latestSubject,
          lastActive,
