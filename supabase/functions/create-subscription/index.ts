@@ -74,8 +74,9 @@ serve(async (req) => {
     const isAddon = action === 'add-slot';
     const isWeekly = action === 'weekly-license';
     
-    let amount = 789000; // Default: ₹7,890.00
-    let description = 'Arukin PRO - Early Access License';
+    // Default to Early Access Annual License
+    let amount = 789000; // Standard: ₹7,890.00
+    let description = 'Arukin PRO - Annual License';
     
     if (isAddon) {
       amount = 120000; // ₹1,200 for addon slot
@@ -84,6 +85,12 @@ serve(async (req) => {
     } else if (isWeekly) {
       amount = 49900; // ₹499 for 1 week
       description = 'Arukin PRO - 1-Week License';
+    } else {
+      // Annual Plan Logic
+      if ((proCount || 0) < 10) {
+        amount = 128000; // Early Bird Promo: ₹1,280
+        description = 'Arukin PRO - Annual License (Early Bird)';
+      }
     }
 
     // Generate standard Razorpay Order
