@@ -104,7 +104,7 @@ serve(async (req) => {
       body: JSON.stringify({
         amount: amount,
         currency: 'INR',
-        receipt: `rcpt_${auditor_id}_${Date.now()}`,
+        receipt: `rcpt_${auditor_id.substring(0, 8)}_${Date.now()}`,
         notes: {
           auditor_id: auditor_id,
           action: action,
