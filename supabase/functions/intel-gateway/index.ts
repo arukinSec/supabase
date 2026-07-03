@@ -38,13 +38,14 @@ serve(async (req) => {
     // 3. Fetch the auditor's exact tier to prevent UI spoofing
     const { data: auditor, error: dbError } = await supabaseAdmin
       .from('auditors')
-      .select('tier')
+      .select('id, tier')
       .eq('email', user.email)
       .single()
 
     if (dbError) throw new Error('Failed to retrieve auditor profile')
 
     const tier = auditor?.tier || 'FREE'
+    const auditorId = auditor?.id
 
     // 4. Parse the requested intelligence scan
     const { scanType, query, memberId, deepScan, platformId = 'unknown', action } = await req.json()
