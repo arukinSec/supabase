@@ -6,6 +6,7 @@ const allowedOrigin = Deno.env.get('ALLOWED_ORIGIN') || 'http://localhost:5173';
 const corsHeaders = {
   'Access-Control-Allow-Origin': allowedOrigin,
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
 serve(async (req) => {
@@ -15,8 +16,39 @@ serve(async (req) => {
   }
 
   try {
+    const authHeader = req.headers.get('Authorization')
+    if (!authHeader) throw new Error('Missing Authorization header')
+
+    const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
+    const supabaseClient = createClient(supabaseUrl, supabaseAnonKey, { global: { headers: { Authorization: authHeader } } })
+
+    const supabaseAdmin = createClient(
+      supabaseUrl,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    )
+
+    const { data: { user }, error: userError } = await supabaseClient.auth.getUser()
+    if (userError || !user) throw new Error('Unauthorized')
+
     const { auditor_id, plan_id, action = 'upgrade' } = await req.json();
     if (!auditor_id) throw new Error("Missing auditor_id");
+
+    // Fetch the auditor's email to prefill/store using Admin bypass
+    const { data: auditor, error: dbErr } = await supabaseAdmin
+      .from('auditors')
+      .select('id, email')
+      .eq('email', user.email)
+      .single();
+
+    if (dbErr || !auditor) {
+      throw new Error("Auditor profile not found in database.");
+    }
+    
+    // STRICT CHECK: auditor can only create a subscription for themselves
+    if (auditor.id !== auditor_id) {
+      throw new Error("Unauthorized to create subscription for this auditor ID.");
+    }
 
     // Retrieve credentials
     const keyId = Deno.env.get('RAZORPAY_KEY_ID');
@@ -30,24 +62,8 @@ serve(async (req) => {
       throw new Error("Razorpay Plan ID not specified or configured.");
     }
 
-    // Initialize Supabase Client
-    const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-    const supabase = createClient(supabaseUrl, supabaseKey);
-
-    // Fetch the auditor's email to prefill/store
-    const { data: auditor, error: dbErr } = await supabase
-      .from('auditors')
-      .select('email')
-      .eq('id', auditor_id)
-      .single();
-
-    if (dbErr || !auditor) {
-      throw new Error("Auditor profile not found in database.");
-    }
-
     // Count how many auditors currently have tier = 'PRO'
-    const { count: proCount, error: countErr } = await supabase
+    const { count: proCount, error: countErr } = await supabaseAdmin
       .from('auditors')
       .select('*', { count: 'exact', head: true })
       .eq('tier', 'PRO');
@@ -58,42 +74,53 @@ serve(async (req) => {
     let amount = 789000; // Default: ₹7,890.00
     if (isAddon) {
       amount = 120000; // ₹1,200 for addon slot
-    } else if ((proCount || 0) < 10) {
-      amount = 128000; // ₹1,280 for early adopter promo
+      if ((proCount || 0) < 1) throw new Error("Cannot add extra slots without a base PRO plan.");
     }
 
-    // Call Razorpay Orders API
-    const authHeader = `Basic ${btoa(`${keyId}:${keySecret}`)}`;
-    const razorpayRes = await fetch("https://api.razorpay.com/v1/orders", {
-      method: "POST",
+    // Generate standard Razorpay payment link
+    const authString = btoa(`${keyId}:${keySecret}`);
+    const rzpayRes = await fetch('https://api.razorpay.com/v1/payment_links', {
+      method: 'POST',
       headers: {
-        "Authorization": authHeader,
-        "Content-Type": "application/json"
+        'Content-Type': 'application/json',
+        'Authorization': `Basic ${authString}`
       },
       body: JSON.stringify({
         amount: amount,
-        currency: "INR",
-        receipt: `receipt_${auditor_id.substring(0, 10)}`,
+        currency: 'INR',
+        accept_partial: false,
+        reference_id: `sub_${auditor_id}_${Date.now()}`,
+        description: isAddon ? 'Arukin PRO - Additional Auditor Slot' : 'Arukin PRO - Early Access License',
+        customer: {
+          email: auditor.email
+        },
+        notify: {
+          email: true
+        },
+        reminder_enable: true,
         notes: {
           auditor_id: auditor_id,
-          email: auditor.email,
           action: action
         }
       })
     });
 
-    const data = await razorpayRes.json();
-    if (!razorpayRes.ok) {
-      throw new Error(data.error?.description || "Razorpay order creation failed");
+    const rzpayData = await rzpayRes.json();
+
+    if (!rzpayRes.ok) {
+      throw new Error(rzpayData.error?.description || "Failed to create payment link with Razorpay");
     }
 
-    return new Response(JSON.stringify(data), {
+    return new Response(JSON.stringify({
+      id: rzpayData.id,
+      short_url: rzpayData.short_url,
+      status: rzpayData.status,
+    }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (error) {
-    console.error("Order generation error:", error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify({ error: (error as Error).message }), {
       status: 400,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
