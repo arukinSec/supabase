@@ -33,7 +33,7 @@ serve(async (req) => {
     const { data: auditor, error: dbError } = await supabaseClient
       .from('auditors')
       .select('tier')
-      .eq('id', user.id)
+      .eq('email', user.email)
       .single()
 
     if (dbError) throw new Error('Failed to retrieve auditor profile')
