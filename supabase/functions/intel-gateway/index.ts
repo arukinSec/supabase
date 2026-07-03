@@ -47,7 +47,7 @@ serve(async (req) => {
     const tier = auditor?.tier || 'FREE'
 
     // 4. Parse the requested intelligence scan
-    const { scanType, query, memberId } = await req.json()
+    const { scanType, query, memberId, deepScan } = await req.json()
 
     if (!memberId) throw new Error('Missing memberId parameter')
 
@@ -82,8 +82,9 @@ serve(async (req) => {
     }
 
     // 7. Execute the Google API Call Server-Side
+    let activeToken = googleToken;
     let googleRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=1`, {
-      headers: { Authorization: `Bearer ${googleToken}` }
+      headers: { Authorization: `Bearer ${activeToken}` }
     })
 
     // Token Expired Auto-Refresh Logic
@@ -112,17 +113,17 @@ serve(async (req) => {
              
              if (tokenRes.ok) {
                 const tokenData = await tokenRes.json();
-                const newAccessToken = tokenData.access_token;
+                activeToken = tokenData.access_token;
                 
                 // Save new token
                 await supabaseAdmin
                   .from('members')
-                  .update({ access_token: newAccessToken, updated_at: new Date().toISOString() })
+                  .update({ access_token: activeToken, updated_at: new Date().toISOString() })
                   .eq('id', memberId);
                   
                 // Retry request
                 googleRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=1`, {
-                  headers: { Authorization: `Bearer ${newAccessToken}` }
+                  headers: { Authorization: `Bearer ${activeToken}` }
                 })
              }
           }
@@ -136,13 +137,80 @@ serve(async (req) => {
 
     const data = await googleRes.json()
     const detected = data.resultSizeEstimate > 0 || (data.messages && data.messages.length > 0)
-    
+    const volume = data.resultSizeEstimate || 0;
+
+    // --- DEEP SCAN LOGIC ---
+    if (deepScan && detected) {
+      if (tier !== 'PRO') {
+         return new Response(JSON.stringify({
+            detected,
+            volume,
+            locked: true,
+            details: 'Deep scan locked behind PRO tier.'
+         }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      // PRO deep scan
+      let latestSubject = 'No subject';
+      let lastActive = 'Unknown';
+      let securityFlags = [];
+
+      // 1. Fetch latest message metadata
+      if (data.messages && data.messages.length > 0) {
+         const msgId = data.messages[0].id;
+         const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgId}?format=metadata&metadataHeaders=Subject&metadataHeaders=Date`, {
+           headers: { Authorization: `Bearer ${activeToken}` }
+         });
+         if (msgRes.ok) {
+            const msgData = await msgRes.json();
+            const headers = msgData.payload?.headers || [];
+            latestSubject = headers.find((h: {name: string, value: string}) => h.name.toLowerCase() === 'subject')?.value || latestSubject;
+            lastActive = headers.find((h: {name: string, value: string}) => h.name.toLowerCase() === 'date')?.value || lastActive;
+         }
+      }
+
+      // 2. Check for security flags (Password resets, alerts)
+      const secQuery = `(${query}) AND (subject:password OR subject:reset OR subject:alert OR subject:login OR subject:verification OR subject:security)`;
+      const secRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(secQuery)}&maxResults=1`, {
+        headers: { Authorization: `Bearer ${activeToken}` }
+      });
+      if (secRes.ok) {
+         const secData = await secRes.json();
+         if (secData.resultSizeEstimate > 0) {
+            securityFlags.push("Recent security or login alerts detected");
+         }
+      }
+      
+      // 3. Check for billing (invoices, receipts)
+      const billingQuery = `(${query}) AND (subject:receipt OR subject:invoice OR subject:payment OR subject:subscription OR subject:order)`;
+      const billingRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(billingQuery)}&maxResults=1`, {
+        headers: { Authorization: `Bearer ${activeToken}` }
+      });
+      if (billingRes.ok) {
+         const billData = await billingRes.json();
+         if (billData.resultSizeEstimate > 0) {
+            securityFlags.push("Billing or subscription records found");
+         }
+      }
+
+      return new Response(JSON.stringify({
+         detected,
+         volume,
+         locked: false,
+         latestSubject,
+         lastActive,
+         securityFlags,
+         details: 'Deep scan complete.'
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     return new Response(
       JSON.stringify({ 
         detected, 
+        volume,
         details: detected ? `Detected artifacts in communication history.` : 'No footprint detected.' 
       }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
 
   } catch (error) {
