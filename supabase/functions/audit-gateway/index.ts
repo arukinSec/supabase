@@ -114,7 +114,15 @@ serve(async (req) => {
       const channel = channelData.items?.[0] || null;
 
       if (!channel) {
-         throw new Error("No YouTube channel found for this account.");
+         // Return empty state instead of throwing 500 error
+         return new Response(JSON.stringify({ 
+           channel: null, 
+           subscriptions: [], 
+           subscribers: [] 
+         }), {
+           status: 200,
+           headers: { ...corsHeaders, "Content-Type": "application/json" },
+         });
       }
 
       // 2. Fetch all Subscriptions (who they are subscribed to)
