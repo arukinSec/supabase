@@ -71,19 +71,24 @@ serve(async (req) => {
     }
 
     const proxyRes = await fetch(url, fetchOpts);
-    const resBody = await proxyRes.text();
+    const status = proxyRes.status;
     const contentType = proxyRes.headers.get("Content-Type") || "application/json";
 
-    return new Response(resBody, {
-      status: proxyRes.status,
-      headers: {
-        ...corsHeaders,
-        "Content-Type": contentType,
-      },
+    let responseBody: any;
+    if (contentType.includes("text/") || contentType.includes("application/json")) {
+      responseBody = await proxyRes.text();
+    } else {
+      const blob = await proxyRes.blob();
+      responseBody = await blob.text();
+    }
+
+    return new Response(JSON.stringify({ __proxy: true, status, body: responseBody, ok: status >= 200 && status < 300 }), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
-    return new Response(JSON.stringify({ error: (error as Error).message }), {
-      status: 500,
+    return new Response(JSON.stringify({ __proxy: true, status: 500, body: null, ok: false, error: (error as Error).message }), {
+      status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
