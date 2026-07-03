@@ -206,11 +206,42 @@ serve(async (req) => {
         }));
       }
 
+      // 6. Fetch YouTube Analytics (Last 7 Days)
+      const endDate = new Date().toISOString().split('T')[0];
+      const startDateObj = new Date();
+      startDateObj.setDate(startDateObj.getDate() - 7);
+      const startDate = startDateObj.toISOString().split('T')[0];
+
+      const analyticsBase = `https://youtubeanalytics.googleapis.com/v2/reports?ids=channel==MINE&startDate=${startDate}&endDate=${endDate}`;
+      
+      const fetchAnalytics = async (query) => {
+         const res = await fetch(`${analyticsBase}&${query}`, { headers });
+         if (!res.ok) return null;
+         return await res.json();
+      };
+
+      const [basicStats, viewsOverTime, trafficSources, geographies, gender] = await Promise.all([
+        fetchAnalytics('metrics=views,estimatedMinutesWatched,estimatedRevenue'),
+        fetchAnalytics('dimensions=day&metrics=views'),
+        fetchAnalytics('dimensions=insightTrafficSourceType&metrics=views&sort=-views&maxResults=5'),
+        fetchAnalytics('dimensions=country&metrics=views&sort=-views&maxResults=5'),
+        fetchAnalytics('dimensions=gender&metrics=viewerPercentage')
+      ]);
+
+      const analyticsData = {
+        basicStats,
+        viewsOverTime,
+        trafficSources,
+        geographies,
+        gender
+      };
+
       return new Response(JSON.stringify({
         channel,
         subscriptions: allSubscriptions,
         subscribers: finalSubscribers,
-        playlists: allPlaylists
+        playlists: allPlaylists,
+        analytics: analyticsData
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
