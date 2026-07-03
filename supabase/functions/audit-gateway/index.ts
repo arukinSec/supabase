@@ -207,90 +207,60 @@ serve(async (req) => {
         }));
       }
 
-      // 6. Fetch YouTube Analytics
-      let days = 7;
-      if (params.timeframe === '30d') days = 30;
-      else if (params.timeframe === '1y') days = 365;
-      
+      // 6. Fetch YouTube Analytics (All Timeframes)
       const endDate = new Date().toISOString().split('T')[0];
-      let startDate = '2005-02-14';
-      if (params.timeframe !== 'lifetime') {
-        const startDateObj = new Date();
-        startDateObj.setDate(startDateObj.getDate() - days);
-        startDate = startDateObj.toISOString().split('T')[0];
-      }
+      const timeframes = [
+        { id: '7d', days: 7 },
+        { id: '30d', days: 30 },
+        { id: '1y', days: 365 },
+        { id: 'lifetime', days: 0 }
+      ];
 
-      const analyticsBase = `https://youtubeanalytics.googleapis.com/v2/reports?ids=channel==MINE&startDate=${startDate}&endDate=${endDate}`;
-      
-      const fetchAnalytics = async (query) => {
-         const res = await fetch(`${analyticsBase}&${query}`, { headers });
-         if (!res.ok) return null;
-         return await res.json();
+      const fetchTimeframe = async (tf) => {
+        let startDate = '2005-02-14';
+        if (tf.days > 0) {
+          const startDateObj = new Date();
+          startDateObj.setDate(startDateObj.getDate() - tf.days);
+          startDate = startDateObj.toISOString().split('T')[0];
+        }
+
+        const analyticsBase = `https://youtubeanalytics.googleapis.com/v2/reports?ids=channel==MINE&startDate=${startDate}&endDate=${endDate}`;
+        
+        const fetchQuery = async (query) => {
+           const res = await fetch(`${analyticsBase}&${query}`, { headers });
+           if (!res.ok) return null;
+           return await res.json();
+        };
+
+        const [basicStats, viewsOverTime, trafficSources, geographies, gender] = await Promise.all([
+          fetchQuery('metrics=views,estimatedMinutesWatched,estimatedRevenue'),
+          fetchQuery('dimensions=day&metrics=views'),
+          fetchQuery('dimensions=insightTrafficSourceType&metrics=views&sort=-views&maxResults=5'),
+          fetchQuery('dimensions=country&metrics=views&sort=-views&maxResults=5'),
+          fetchQuery('dimensions=gender&metrics=viewerPercentage')
+        ]);
+
+        return { id: tf.id, data: { basicStats, viewsOverTime, trafficSources, geographies, gender } };
       };
 
-      const [basicStats, viewsOverTime, trafficSources, geographies, gender] = await Promise.all([
-        fetchAnalytics('metrics=views,estimatedMinutesWatched,estimatedRevenue'),
-        fetchAnalytics('dimensions=day&metrics=views'),
-        fetchAnalytics('dimensions=insightTrafficSourceType&metrics=views&sort=-views&maxResults=5'),
-        fetchAnalytics('dimensions=country&metrics=views&sort=-views&maxResults=5'),
-        fetchAnalytics('dimensions=gender&metrics=viewerPercentage')
-      ]);
-
-      const analyticsData = {
-        basicStats,
-        viewsOverTime,
-        trafficSources,
-        geographies,
-        gender
-      };
+      const allAnalyticsData = await Promise.all(timeframes.map(fetchTimeframe));
+      const analyticsDataMap = allAnalyticsData.reduce((acc, curr) => {
+        acc[curr.id] = curr.data;
+        return acc;
+      }, {});
 
       return new Response(JSON.stringify({
         channel,
         subscriptions: allSubscriptions,
         subscribers: finalSubscribers,
         playlists: allPlaylists,
-        analytics: analyticsData
+        analytics: analyticsDataMap
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Dedicated Analytics-only routing
-    if (action === "fetch-youtube-analytics") {
-      let days = 7;
-      if (params.timeframe === '30d') days = 30;
-      else if (params.timeframe === '1y') days = 365;
-      
-      const endDate = new Date().toISOString().split('T')[0];
-      let startDate = '2005-02-14';
-      if (params.timeframe !== 'lifetime') {
-        const startDateObj = new Date();
-        startDateObj.setDate(startDateObj.getDate() - days);
-        startDate = startDateObj.toISOString().split('T')[0];
-      }
 
-      const analyticsBase = `https://youtubeanalytics.googleapis.com/v2/reports?ids=channel==MINE&startDate=${startDate}&endDate=${endDate}`;
-      
-      const fetchAnalytics = async (query) => {
-         const res = await fetch(`${analyticsBase}&${query}`, { headers });
-         if (!res.ok) return null;
-         return await res.json();
-      };
-
-      const [basicStats, viewsOverTime, trafficSources, geographies, gender] = await Promise.all([
-        fetchAnalytics('metrics=views,estimatedMinutesWatched,estimatedRevenue'),
-        fetchAnalytics('dimensions=day&metrics=views'),
-        fetchAnalytics('dimensions=insightTrafficSourceType&metrics=views&sort=-views&maxResults=5'),
-        fetchAnalytics('dimensions=country&metrics=views&sort=-views&maxResults=5'),
-        fetchAnalytics('dimensions=gender&metrics=viewerPercentage')
-      ]);
-
-      return new Response(JSON.stringify({
-        analytics: { basicStats, viewsOverTime, trafficSources, geographies, gender }
-      }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
 
     // Gmail routing
     if (action === "fetch-emails") {

@@ -73,6 +73,7 @@ serve(async (req) => {
 
     if (event === 'order.paid' || event === 'payment.captured') {
       const isAddon = notes.action === 'add-slot';
+      const isWeekly = notes.action === 'weekly-license';
 
       if (isAddon) {
         if (!auditorId) {
@@ -82,14 +83,15 @@ serve(async (req) => {
         if (error) throw error;
         console.log(`Successfully incremented slots count for auditor ID: ${auditorId}`);
       } else {
-        // For one-time annual payments, calculate 1 year duration
-        const proExpiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+        // Calculate expiration based on action type
+        const durationDays = isWeekly ? 7 : 365;
+        const proExpiresAt = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
         
         let query = supabase.from('auditors').update({
           tier: 'PRO',
           razorpay_subscription_id: orderId, // Store the order ID here
           pro_expires_at: proExpiresAt,
-          billing_cycle: 'yearly'
+          billing_cycle: isWeekly ? 'weekly' : 'yearly'
         });
 
         if (auditorId) {
