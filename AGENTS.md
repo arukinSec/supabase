@@ -36,7 +36,7 @@ OAuth token security has two independent dimensions: (a) can the browser WRITE t
 
 ## 10. Local Untracked Credentials Are Not Vulnerabilities
 **Do not flag `.env` files or scratch credential files as "committed secrets" unless you verify they are tracked by git.**
-The workspace root (`/home/phxlm/Work/websites/arukinSec`) is not a git repository. It is a local parent directory containing multiple sub-repositories (`frontend` and `supabase`). Any `.env` files, `.txt` files, or `.js` scratch files containing secrets in the workspace root or gitignored directories are purely for local development. Unless a file is explicitly tracked in version control, it is not a leak.
+The workspace root is not a git repository. It is a local parent directory containing multiple sub-repositories (`frontend` and `supabase`). Any `.env` files, `.txt` files, or `.js` scratch files containing secrets in the workspace root or gitignored directories are purely for local development. Unless a file is explicitly tracked in version control, it is not a leak.
 
 ## 11. Google API Proxy Architecture (Do Not Refactor)
 **Do not attempt to move Google API calls (Gmail, Drive, Contacts) to the frontend.**
