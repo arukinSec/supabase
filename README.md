@@ -2,7 +2,7 @@
 
 Arukin is an advanced security monitoring and account management gateway designed for at-risk persons (vulnerable adults, the elderly, or targets of cyberstalking).
 
-This repository (`arukin-supabase`) contains the backend infrastructure for Arukin, built on Supabase, PostgreSQL, and Deno Edge Functions.
+This repository (`supabase`) contains the backend infrastructure for Arukin, built on Supabase, PostgreSQL, and Deno Edge Functions.
 
 ---
 
