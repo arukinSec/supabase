@@ -1,0 +1,2 @@
+-- Empty seed file to satisfy Supabase CLI configuration
+-- Add dummy data here later if needed for local development.
