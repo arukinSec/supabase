@@ -58,8 +58,6 @@ using ((auditor_id IN ( SELECT auditors.id
   WHERE ((auditors.email)::text = (auth.jwt() ->> 'email'::text)))));
 
 
-CREATE TRIGGER trg_update_members_tier AFTER UPDATE OF tier ON public.auditors FOR EACH ROW EXECUTE FUNCTION public.update_members_tier_on_upgrade_exact();
 
-CREATE TRIGGER trg_assign_member_tier BEFORE INSERT ON public.members FOR EACH ROW EXECUTE FUNCTION public.assign_member_tier_exact();
 
 
