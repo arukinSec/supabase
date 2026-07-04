@@ -6,18 +6,18 @@ This repository (`arukin-supabase`) contains the backend infrastructure for Aruk
 
 ---
 
-## 📚 Technical Documentation
+## Technical Documentation
 
 For a comprehensive breakdown of the database architecture, security policies, and subscription logic, please refer to the official documentation located in the root workspace `/docs` directory:
 
-1. **[Frontend Architecture](../docs/02_frontend_architecture.md)**
-2. **[Backend Architecture](../docs/03_backend_architecture.md)**
-3. **[Security Model](../docs/04_security_model.md)**
-4. **[Billing & Tiers](../docs/05_billing_and_tiers.md)**
+1. **[Frontend Architecture](https://github.com/arukinSec/docs/blob/master/02_frontend_architecture.md)**
+2. **[Backend Architecture](https://github.com/arukinSec/docs/blob/master/03_backend_architecture.md)**
+3. **[Security Model](https://github.com/arukinSec/docs/blob/master/04_security_model.md)**
+4. **[Billing & Tiers](https://github.com/arukinSec/docs/blob/master/05_billing_and_tiers.md)**
 
 ---
 
-## ⚡ Key Highlights
+## Key Highlights
 
 - **PostgreSQL Database:** The core database storing managers, connected members, usage logs, and billing details.
 - **Strict Row-Level Security (RLS):** All tables are heavily secured using PostgreSQL RLS policies. No data is accessible without a verified JSON Web Token (JWT) matching the correct manager.
@@ -26,7 +26,7 @@ For a comprehensive breakdown of the database architecture, security policies, a
 
 ---
 
-## 🛠️ Local Development & Deployment
+## Local Development & Deployment
 
 Use the [Supabase CLI](https://supabase.com/docs/guides/cli) to develop and deploy:
 
