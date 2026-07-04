@@ -23,11 +23,9 @@ ALTER TABLE members DROP CONSTRAINT IF EXISTS members_auditor_id_fkey;
 ALTER TABLE audit_logs DROP CONSTRAINT IF EXISTS audit_logs_auditor_id_fkey;
 ALTER TABLE audit_logs DROP CONSTRAINT IF EXISTS audit_logs_performer_id_fkey;
 
--- 5. Drop indexes
+-- 5. Drop indexes (usage_logs.auditor_id references auth.users, not auditors — skip it)
 DROP INDEX IF EXISTS idx_members_auditor_id;
 DROP INDEX IF EXISTS idx_audit_logs_auditor_id;
-DROP INDEX IF EXISTS idx_usage_logs_auditor_id;
-DROP INDEX IF EXISTS idx_usage_logs_monthly;
 
 -- 6. Rename columns
 ALTER TABLE members RENAME COLUMN auditor_id TO manager_id;
@@ -39,8 +37,6 @@ ALTER TABLE auditors RENAME TO managers;
 -- 8. Recreate indexes with new names
 CREATE INDEX idx_members_manager_id ON public.members(manager_id);
 CREATE INDEX idx_audit_logs_manager_id ON public.audit_logs(manager_id);
-CREATE INDEX idx_usage_logs_manager_id ON public.usage_logs(manager_id);
-CREATE INDEX idx_usage_logs_monthly ON public.usage_logs(manager_id, scan_type, platform, created_at);
 
 -- 9. Recreate FK constraints
 ALTER TABLE members ADD CONSTRAINT members_manager_id_fkey
@@ -222,11 +218,12 @@ USING (manager_id IN (
   WHERE LOWER(managers.email) = LOWER(auth.jwt() ->> 'email')
 ));
 
+-- usage_logs.auditor_id references auth.users(id) not managers(id) — policy name updated only
 CREATE POLICY "Managers can view their own usage logs"
 ON usage_logs
 FOR SELECT
 TO authenticated
-USING (manager_id = auth.uid());
+USING (auditor_id = auth.uid());
 
 -- 13. Update RPC permissions for renamed functions
 GRANT ALL ON FUNCTION public.get_pro_manager_count() TO anon, authenticated, service_role;
