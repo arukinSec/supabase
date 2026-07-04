@@ -102,13 +102,12 @@ openai_api_key = "env(OPENAI_API_KEY)"
 
 # Email testing server. Emails sent with the local dev setup are not actually sent - rather, they
 # are monitored, and you can view the emails that would have been sent from the web interface.
-[inbucket]
+[local_smtp]
 enabled = true
 # Port to use for the email testing server web interface.
 port = 54324
 # Uncomment to expose additional ports for testing user applications that send emails.
 # smtp_port = 54325
-# pop3_port = 54326
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
 
@@ -327,7 +326,7 @@ secret = "env(SUPABASE_AUTH_EXTERNAL_APPLE_SECRET)"
 
 [auth.external.google]
 enabled = true
-client_id = "env(VITE_GOOGLE_CLIENT_ID)"
+client_id = "env(GOOGLE_CLIENT_ID)"
 secret = "env(GOOGLE_CLIENT_SECRET)"
 # Overrides the default auth callback URL derived from auth.external_url.
 redirect_uri = ""
