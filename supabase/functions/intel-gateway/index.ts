@@ -59,8 +59,8 @@ serve(async (req) => {
       startOfMonth.setHours(0, 0, 0, 0);
       
       const { data: usageLogs, error: usageError } = await supabaseAdmin
-        .from('usage_logs')
-        .select('scan_type, platform, member_id')
+        .from('scan_executions')
+        .select('scan_depth, platform_id, member_id, scan_category')
         .eq('manager_id', managerId)
         .eq('member_id', memberId)
         .gte('created_at', startOfMonth.toISOString());
@@ -70,7 +70,9 @@ serve(async (req) => {
       return new Response(JSON.stringify({ usage: usageLogs }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    const actualScanType = deepScan ? 'insight_scan' : scanType; // e.g. 'social_scan', 'insight_scan'
+    // Determine category and depth based on the incoming request
+    const actualScanCategory = scanType === 'social' ? 'SOCIALS' : scanType.toUpperCase(); 
+    const actualScanDepth = deepScan ? 'DEEP' : 'SIMPLE';
 
     // 5. Fetch the target member's access token and tier from the DB using Admin to bypass RLS
     const { data: member, error: memberError } = await supabaseAdmin
@@ -88,49 +90,51 @@ serve(async (req) => {
     const googleToken = member.access_token
     const memberTier = member.tier || 'FREE'
 
-    // 4b. Enforce Rate Limits via usage_logs
+    // 4b. Enforce Rate Limits via scan_executions
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
 
     const { count, error: countError } = await supabaseAdmin
-      .from('usage_logs')
+      .from('scan_executions')
       .select('*', { count: 'exact', head: true })
       .eq('manager_id', managerId)
       .eq('member_id', memberId)
-      .eq('scan_type', actualScanType)
-      .eq('platform', platformId)
+      .eq('scan_category', actualScanCategory)
+      .eq('scan_depth', actualScanDepth)
+      .eq('platform_id', platformId)
       .gte('created_at', startOfMonth.toISOString());
 
     if (!countError && count !== null) {
       if (memberTier === 'FREE') {
-        if (actualScanType === 'insight_scan' && count >= 1) {
-          return new Response(JSON.stringify({ error: 'Monthly insight scan limit reached for this account. Upgrade to PRO for 5x capacity.' }), { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        if (actualScanDepth === 'DEEP' && count >= 5) {
+          return new Response(JSON.stringify({ error: 'Monthly DEEP scan limit reached for this platform. Upgrade to PRO for 10x capacity.' }), { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
-        if (actualScanType !== 'insight_scan' && count >= 2) {
-          return new Response(JSON.stringify({ error: 'Monthly footprint scan limit reached for this account. Upgrade to PRO for 10x capacity.' }), { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        if (actualScanDepth === 'SIMPLE' && count >= 2) {
+          return new Response(JSON.stringify({ error: 'Monthly SIMPLE scan limit reached for this platform. Upgrade to PRO for 10x capacity.' }), { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
       } else {
-        // PRO tier
-        if (actualScanType === 'insight_scan' && count >= 5) {
-          return new Response(JSON.stringify({ error: 'Monthly PRO insight scan limit reached for this account.' }), { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        // PRO / TRIAL tier
+        if (actualScanDepth === 'DEEP' && count >= 10) {
+          return new Response(JSON.stringify({ error: 'Monthly PRO deep scan limit reached for this platform.' }), { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
-        if (actualScanType !== 'insight_scan' && count >= 10) {
-          return new Response(JSON.stringify({ error: 'Monthly PRO footprint scan limit reached for this account.' }), { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        if (actualScanDepth === 'SIMPLE' && count >= 5) {
+          return new Response(JSON.stringify({ error: 'Monthly PRO simple scan limit reached for this platform.' }), { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
       }
     }
 
     // Insert usage log (fire and forget conceptually, but we await it for safety)
-    const { error: insertError } = await supabaseAdmin.from('usage_logs').insert({
+    const { error: insertError } = await supabaseAdmin.from('scan_executions').insert({
       manager_id: managerId,
       member_id: memberId,
-      scan_type: actualScanType,
-      platform: platformId
+      scan_category: actualScanCategory,
+      scan_depth: actualScanDepth,
+      platform_id: platformId
     });
     
     if (insertError) {
-      console.error("Failed to insert usage log:", insertError);
+      console.error("Failed to insert scan_executions log:", insertError);
     }
 
     // 6. ENFORCE STRICT ROLE-BASED ACCESS CONTROL (RBAC)
