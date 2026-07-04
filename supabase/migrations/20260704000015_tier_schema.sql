@@ -159,6 +159,7 @@ END;
 $$;
 
 -- 9. Replace `verify_manager_capacity` to use new DB constraints
+DROP FUNCTION IF EXISTS public.verify_manager_capacity(text);
 CREATE OR REPLACE FUNCTION public.verify_manager_capacity(auth_code text)
 RETURNS boolean
 LANGUAGE plpgsql
