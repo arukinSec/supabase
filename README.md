@@ -1,25 +1,42 @@
-# ArukinSec Backend (`arukin-supabase`)
+# Arukin Backend
 
-This repository contains the backend infrastructure for ArukinSec, hosted on Supabase.
+Arukin is an advanced security monitoring and account management gateway designed for at-risk persons (vulnerable adults, the elderly, or targets of cyberstalking).
 
-## Architecture
+This repository (`arukin-supabase`) contains the backend infrastructure for Arukin, built on Supabase, PostgreSQL, and Deno Edge Functions.
 
-- **PostgreSQL Database:** The core database storing auditors, members, usage logs, and billing details.
-- **Row-Level Security (RLS):** All tables are heavily secured using PostgreSQL RLS policies. No data is accessible without a verified JSON Web Token (JWT).
-- **Security Definer RPCs:** Protected functions like `increment_slots` are locked down to `service_role` to prevent unauthorized execution.
-- **Edge Functions (Deno):**
-  - `audit-gateway`: Handles auditing logic and ownership verification.
-  - `create-subscription`: Manages Stripe/Razorpay billing actions.
-  - `google-proxy`: A secure server-side proxy that injects Google access tokens into requests, ensuring tokens never touch the client browser.
-  - `intel-gateway`: Processes intensive intelligence/financial scanning.
-  - `refresh-google-token`: Securely refreshes Google OAuth tokens when they expire.
-  - `expire-pro`: A daily cron job (`pg_net` triggered) that downgrades expired PRO accounts.
+---
 
-## Deployment
+## 📚 Technical Documentation
 
-Deploy using the Supabase CLI:
+For a comprehensive breakdown of the database architecture, security policies, and subscription logic, please refer to the official documentation located in the root workspace `/docs` directory:
+
+1. **[Frontend Architecture](../docs/02_frontend_architecture.md)**
+2. **[Backend Architecture](../docs/03_backend_architecture.md)**
+3. **[Security Model](../docs/04_security_model.md)**
+4. **[Billing & Tiers](../docs/05_billing_and_tiers.md)**
+
+---
+
+## ⚡ Key Highlights
+
+- **PostgreSQL Database:** The core database storing managers, connected members, usage logs, and billing details.
+- **Strict Row-Level Security (RLS):** All tables are heavily secured using PostgreSQL RLS policies. No data is accessible without a verified JSON Web Token (JWT) matching the correct manager.
+- **Serverless API Proxying:** Deno Edge Functions securely inject Google OAuth tokens on the server, ensuring sensitive access tokens never reach the frontend browser context.
+- **Automated Billing Logic:** Webhooks and Database Triggers seamlessly cascade subscription upgrades and enforced quotas.
+
+---
+
+## 🛠️ Local Development & Deployment
+
+Use the [Supabase CLI](https://supabase.com/docs/guides/cli) to develop and deploy:
 
 ```bash
+# Pull latest remote schema
+supabase db pull
+
+# Push schema changes to remote
 supabase db push
+
+# Deploy all edge functions
 supabase functions deploy
 ```
