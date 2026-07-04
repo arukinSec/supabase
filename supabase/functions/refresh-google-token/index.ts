@@ -28,27 +28,27 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    // 2. Cryptographically verify the logged-in auditor's session
+    // 2. Cryptographically verify the logged-in manager's session
     const jwt = authHeader.replace('Bearer ', '').trim();
     const { data: { user }, error: userError } = await supabaseClient.auth.getUser(jwt)
     if (userError || !user) throw new Error('Unauthorized')
 
-    // 3. Verify the auditor exists
-    const { data: auditor, error: dbError } = await supabaseAdmin
-      .from('auditors')
+    // 3. Verify the manager exists
+    const { data: manager, error: dbError } = await supabaseAdmin
+      .from('managers')
       .select('id')
       .eq('email', user.email)
       .single()
 
-    if (dbError) throw new Error('Failed to retrieve auditor profile')
+    if (dbError) throw new Error('Failed to retrieve manager profile')
 
     const { member_id } = await req.json();
     if (!member_id) throw new Error("Missing member_id");
 
-    // 4. Verify the member belongs to this auditor (Security check)
+    // 4. Verify the member belongs to this manager (Security check)
     const { data: memberCheck, error: memberCheckError } = await supabaseAdmin
       .from('members')
-      .select('auditor_id, google_refresh_token')
+      .select('manager_id, google_refresh_token')
       .eq('id', member_id)
       .single();
 
@@ -56,8 +56,8 @@ serve(async (req) => {
       throw new Error("Member not found.");
     }
     
-    // STRICT CHECK: the auditor can only refresh tokens for their own members
-    if (memberCheck.auditor_id !== auditor.id) {
+    // STRICT CHECK: the manager can only refresh tokens for their own members
+    if (memberCheck.manager_id !== manager.id) {
       throw new Error("Unauthorized to access this member.");
     }
 

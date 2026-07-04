@@ -32,13 +32,13 @@ serve(async (req) => {
     const { data: { user }, error: userError } = await supabaseClient.auth.getUser(jwt);
     if (userError || !user) throw new Error('Unauthorized');
 
-    const { data: auditor, error: auditorError } = await supabase
-      .from('auditors')
+    const { data: manager, error: managerError } = await supabase
+      .from('managers')
       .select('id, tier')
       .eq('email', user.email)
       .single();
 
-    if (auditorError) throw new Error('Failed to retrieve auditor profile');
+    if (managerError) throw new Error('Failed to retrieve manager profile');
 
     const payload = await req.json();
     const { action, memberId, plan = "free", params = {} } = payload;
@@ -50,7 +50,7 @@ serve(async (req) => {
     if (memberId) {
       const { data: memberData, error: memberErr } = await supabase
         .from("members")
-        .select("access_token, google_refresh_token, email, auditor_id, tier")
+        .select("access_token, google_refresh_token, email, manager_id, tier")
         .eq("id", memberId)
         .single();
         
@@ -58,8 +58,8 @@ serve(async (req) => {
         throw new Error("Could not find member in database.");
       }
 
-      if (memberData.auditor_id && memberData.auditor_id !== auditor.id) {
-        throw new Error("Unauthorized: member does not belong to this auditor");
+      if (memberData.manager_id && memberData.manager_id !== manager.id) {
+        throw new Error("Unauthorized: member does not belong to this manager");
       }
       
       googleToken = memberData.access_token;

@@ -32,23 +32,23 @@ serve(async (req) => {
     const { data: { user }, error: userError } = await supabaseClient.auth.getUser(jwt)
     if (userError || !user) throw new Error('Unauthorized')
 
-    const { auditor_id, plan_id, action = 'upgrade' } = await req.json();
-    if (!auditor_id) throw new Error("Missing auditor_id");
+    const { manager_id, plan_id, action = 'upgrade' } = await req.json();
+    if (!manager_id) throw new Error("Missing manager_id");
 
-    // Fetch the auditor's email to prefill/store using Admin bypass
-    const { data: auditor, error: dbErr } = await supabaseAdmin
-      .from('auditors')
+    // Fetch the manager's email to prefill/store using Admin bypass
+    const { data: manager, error: dbErr } = await supabaseAdmin
+      .from('managers')
       .select('id, email, billing_cycle')
       .eq('email', user.email)
       .single();
 
-    if (dbErr || !auditor) {
-      throw new Error("Auditor profile not found in database.");
+    if (dbErr || !manager) {
+      throw new Error("Manager profile not found in database.");
     }
     
-    // STRICT CHECK: auditor can only create a subscription for themselves
-    if (auditor.id !== auditor_id) {
-      throw new Error("Unauthorized to create subscription for this auditor ID.");
+    // STRICT CHECK: manager can only create a subscription for themselves
+    if (manager.id !== manager_id) {
+      throw new Error("Unauthorized to create subscription for this manager ID.");
     }
 
     // Retrieve credentials
@@ -63,9 +63,9 @@ serve(async (req) => {
       throw new Error("Razorpay Plan ID not specified or configured.");
     }
 
-    // Count how many auditors currently have tier = 'PRO'
+    // Count how many managers currently have tier = 'PRO'
     const { count: proCount, error: countErr } = await supabaseAdmin
-      .from('auditors')
+      .from('managers')
       .select('*', { count: 'exact', head: true })
       .eq('tier', 'PRO');
 
@@ -80,8 +80,8 @@ serve(async (req) => {
     
     if (isAddon) {
       amount = 120000; // ₹1,200 for addon slot
-      description = 'Arukin PRO - Additional Auditor Slot';
-      if ((proCount || 0) < 1 || auditor.billing_cycle !== 'yearly') {
+      description = 'Arukin PRO - Additional Manager Slot';
+      if ((proCount || 0) < 1 || manager.billing_cycle !== 'yearly') {
         throw new Error("Cannot add extra slots without an Annual PRO plan.");
       }
     } else if (isWeekly) {
@@ -106,11 +106,11 @@ serve(async (req) => {
       body: JSON.stringify({
         amount: amount,
         currency: 'INR',
-        receipt: `rcpt_${auditor_id.substring(0, 8)}_${Date.now()}`,
+        receipt: `rcpt_${manager_id.substring(0, 8)}_${Date.now()}`,
         notes: {
-          auditor_id: auditor_id,
+          manager_id: manager_id,
           action: action,
-          email: auditor.email
+          email: manager.email
         }
       })
     });

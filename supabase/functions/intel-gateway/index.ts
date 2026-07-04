@@ -31,22 +31,22 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    // 2. Cryptographically verify the logged-in auditor's session
+    // 2. Cryptographically verify the logged-in manager's session
     const jwt = authHeader.replace('Bearer ', '').trim();
     const { data: { user }, error: userError } = await supabaseClient.auth.getUser(jwt)
     if (userError || !user) throw new Error('Unauthorized')
 
-    // 3. Fetch the auditor's exact tier to prevent UI spoofing
-    const { data: auditor, error: dbError } = await supabaseAdmin
-      .from('auditors')
+    // 3. Fetch the manager's exact tier to prevent UI spoofing
+    const { data: manager, error: dbError } = await supabaseAdmin
+      .from('managers')
       .select('id, tier')
       .eq('email', user.email)
       .single()
 
-    if (dbError) throw new Error('Failed to retrieve auditor profile')
+    if (dbError) throw new Error('Failed to retrieve manager profile')
 
-    const tier = auditor?.tier || 'FREE'
-    const auditorId = user.id
+    const tier = manager?.tier || 'FREE'
+    const managerId = user.id
 
     // 4. Parse the requested intelligence scan
     const { scanType, query, memberId, deepScan, platformId = 'unknown', action } = await req.json()
@@ -61,7 +61,7 @@ serve(async (req) => {
       const { data: usageLogs, error: usageError } = await supabaseAdmin
         .from('usage_logs')
         .select('scan_type, platform, member_id')
-        .eq('auditor_id', auditorId)
+        .eq('manager_id', managerId)
         .eq('member_id', memberId)
         .gte('created_at', startOfMonth.toISOString());
         
@@ -96,7 +96,7 @@ serve(async (req) => {
     const { count, error: countError } = await supabaseAdmin
       .from('usage_logs')
       .select('*', { count: 'exact', head: true })
-      .eq('auditor_id', auditorId)
+      .eq('manager_id', managerId)
       .eq('member_id', memberId)
       .eq('scan_type', actualScanType)
       .eq('platform', platformId)
@@ -123,7 +123,7 @@ serve(async (req) => {
 
     // Insert usage log (fire and forget conceptually, but we await it for safety)
     const { error: insertError } = await supabaseAdmin.from('usage_logs').insert({
-      auditor_id: auditorId,
+      manager_id: managerId,
       member_id: memberId,
       scan_type: actualScanType,
       platform: platformId

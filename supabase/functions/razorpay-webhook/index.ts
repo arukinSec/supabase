@@ -56,7 +56,7 @@ serve(async (req) => {
     
     const orderId = order?.id || payment?.order_id || '';
     const notes = order?.notes || payment?.notes || {};
-    const auditorId = notes.auditor_id;
+    const managerId = notes.manager_id;
     const email = notes.email || payment?.email;
 
     if (!orderId && !payment) {
@@ -76,35 +76,35 @@ serve(async (req) => {
       const isWeekly = notes.action === 'weekly-license';
 
       if (isAddon) {
-        if (!auditorId) {
-          throw new Error("Unable to identify auditor for slot increment: no auditor_id found in notes.");
+        if (!managerId) {
+          throw new Error("Unable to identify manager for slot increment: no manager_id found in notes.");
         }
-        const { error } = await supabase.rpc('increment_slots', { auditor_uuid: auditorId });
+        const { error } = await supabase.rpc('increment_manager_slots', { manager_uuid: managerId });
         if (error) throw error;
-        console.log(`Successfully incremented slots count for auditor ID: ${auditorId}`);
+        console.log(`Successfully incremented slots count for manager ID: ${managerId}`);
       } else {
         // Calculate expiration based on action type
         const durationDays = isWeekly ? 7 : 365;
         const proExpiresAt = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
         
-        let query = supabase.from('auditors').update({
+        let query = supabase.from('managers').update({
           tier: 'PRO',
           razorpay_subscription_id: orderId, // Store the order ID here
           pro_expires_at: proExpiresAt,
           billing_cycle: isWeekly ? 'weekly' : 'yearly'
         });
 
-        if (auditorId) {
-          query = query.eq('id', auditorId);
+        if (managerId) {
+          query = query.eq('id', managerId);
         } else if (email) {
           query = query.eq('email', email.toLowerCase());
         } else {
-          throw new Error("Unable to identify auditor: no auditor_id or email found in payload.");
+          throw new Error("Unable to identify manager: no manager_id or email found in payload.");
         }
 
         const { error } = await query;
         if (error) throw error;
-        console.log(`Successfully upgraded auditor to PRO (One-Time Order) for ID/Email: ${auditorId || email}`);
+        console.log(`Successfully upgraded manager to PRO (One-Time Order) for ID/Email: ${managerId || email}`);
       }
     }
 

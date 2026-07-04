@@ -31,27 +31,27 @@ serve(async (req) => {
     const { data: { user }, error: userError } = await supabaseClient.auth.getUser(jwt);
     if (userError || !user) throw new Error("Unauthorized");
 
-    const { data: auditor, error: auditorError } = await supabaseAdmin
-      .from("auditors")
+    const { data: manager, error: managerError } = await supabaseAdmin
+      .from("managers")
       .select("id")
       .eq("email", user.email)
       .single();
 
-    if (auditorError) throw new Error("Failed to retrieve auditor profile");
+    if (managerError) throw new Error("Failed to retrieve manager profile");
 
     const { url, memberId, method = "GET", body } = await req.json();
     if (!url || !memberId) throw new Error("Missing url or memberId");
 
     const { data: member, error: memberError } = await supabaseAdmin
       .from("members")
-      .select("access_token, google_refresh_token, auditor_id")
+      .select("access_token, google_refresh_token, manager_id")
       .eq("id", memberId)
       .single();
 
     if (memberError || !member) throw new Error("Member not found");
 
-    if (member.auditor_id && member.auditor_id !== auditor.id) {
-      throw new Error("Unauthorized: member does not belong to this auditor");
+    if (member.manager_id && member.manager_id !== manager.id) {
+      throw new Error("Unauthorized: member does not belong to this manager");
     }
 
     let token = member.access_token;

@@ -22,7 +22,7 @@ serve(async (req) => {
     
     while (true) {
       const { data: expired, error: fetchError } = await supabase
-        .from("auditors")
+        .from("managers")
         .select("id")
         .eq("tier", "PRO")
         .lt("pro_expires_at", new Date().toISOString())
@@ -42,7 +42,7 @@ serve(async (req) => {
         const chunk = expiredIds.slice(i, i + CHUNK_SIZE);
         
         const { error: updateError } = await supabase
-          .from("auditors")
+          .from("managers")
           .update({ tier: "FREE", pro_expires_at: null, billing_cycle: null })
           .in("id", chunk);
 
@@ -51,7 +51,7 @@ serve(async (req) => {
         const { error: memberError } = await supabase
           .from("members")
           .update({ tier: "FREE" })
-          .in("auditor_id", chunk);
+          .in("manager_id", chunk);
 
         if (memberError) throw memberError;
       }
