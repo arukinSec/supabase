@@ -18,37 +18,48 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
 
-    const { data: expired, error: fetchError } = await supabase
-      .from("auditors")
-      .select("id")
-      .eq("tier", "PRO")
-      .lt("pro_expires_at", new Date().toISOString());
+    let totalProcessed = 0;
+    
+    while (true) {
+      const { data: expired, error: fetchError } = await supabase
+        .from("auditors")
+        .select("id")
+        .eq("tier", "PRO")
+        .lt("pro_expires_at", new Date().toISOString())
+        .limit(500);
 
-    if (fetchError) throw fetchError;
+      if (fetchError) throw fetchError;
+      
+      if (!expired || expired.length === 0) {
+        break;
+      }
 
-    if (!expired || expired.length === 0) {
-      return new Response(JSON.stringify({ expired: 0 }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      const expiredIds = expired.map((a) => a.id);
+      
+      // Process in chunks of 50 to prevent URI Too Long (414) in PostgREST
+      const CHUNK_SIZE = 50;
+      for (let i = 0; i < expiredIds.length; i += CHUNK_SIZE) {
+        const chunk = expiredIds.slice(i, i + CHUNK_SIZE);
+        
+        const { error: updateError } = await supabase
+          .from("auditors")
+          .update({ tier: "FREE", pro_expires_at: null, billing_cycle: null })
+          .in("id", chunk);
+
+        if (updateError) throw updateError;
+
+        const { error: memberError } = await supabase
+          .from("members")
+          .update({ tier: "FREE" })
+          .in("auditor_id", chunk);
+
+        if (memberError) throw memberError;
+      }
+      
+      totalProcessed += expiredIds.length;
     }
 
-    const expiredIds = expired.map((a) => a.id);
-
-    const { error: updateError } = await supabase
-      .from("auditors")
-      .update({ tier: "FREE", pro_expires_at: null, billing_cycle: null })
-      .in("id", expiredIds);
-
-    if (updateError) throw updateError;
-
-    const { error: memberError } = await supabase
-      .from("members")
-      .update({ tier: "FREE" })
-      .in("auditor_id", expiredIds);
-
-    if (memberError) throw memberError;
-
-    return new Response(JSON.stringify({ expired: expiredIds.length }), {
+    return new Response(JSON.stringify({ expired: totalProcessed }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
