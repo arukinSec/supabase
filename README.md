@@ -25,17 +25,19 @@ The documentation has been completely restructured into an enterprise knowledge 
 
 ---
 
-## Local Development & Deployment
+## Local Development & Physical Branching
 
-Use the [Supabase CLI](https://supabase.com/docs/guides/cli) to develop and deploy:
+To prevent accidental deployments to the cloud and allow zero-risk experimentation, this project uses a physical directory-based branching model for the backend instead of standard Git checkout branch switching.
 
-```bash
-# Pull latest remote schema
-supabase db pull
+### Directory Structure as Branches
+Directories within the backend space represent your development states:
+* `/supabase` (or `/supabase/master` when organized): Represents the stable tracking master state.
+* `/supabase/experimental` (or target sandbox name): A completely decoupled clone for testing high-risk migrations.
 
-# Push schema changes to remote
-supabase db push
+Check the `README.md` inside the specific branch directories (e.g., `experimental/README.md`) for explicit setup rules.
 
-# Deploy all edge functions
-supabase functions deploy
-```
+### Core Safeguards
+* **NEVER** run `git pull` or `git push` inside an experimental folder unless you are deliberately syncing verified code.
+* **NEVER** push migrations or deploy functions to the cloud instance (`supabase db push` or `supabase functions deploy`) from an experimental directory. Keep all changes restricted to the local Docker containers.
+* **To reset**: Simply nuke the local database inside the directory using `supabase db reset`, or delete the experimental folder entirely and recopy from the stable master directory.
+

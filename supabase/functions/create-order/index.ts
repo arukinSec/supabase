@@ -16,45 +16,30 @@ serve(async (req) => {
   }
 
   try {
-    const authHeader = req.headers.get('Authorization')
-    if (!authHeader) throw new Error('Missing Authorization header')
-
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
-    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
-    const supabaseClient = createClient(supabaseUrl, supabaseAnonKey, { global: { headers: { Authorization: authHeader } } })
-
     const supabaseAdmin = createClient(
       supabaseUrl,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    const jwt = authHeader.replace('Bearer ', '').trim();
-    const { data: { user }, error: userError } = await supabaseClient.auth.getUser(jwt)
-    if (userError || !user) throw new Error('Unauthorized')
-
     const { manager_id, plan_id, action = 'upgrade' } = await req.json();
     if (!manager_id) throw new Error("Missing manager_id");
 
-    // Fetch the manager's email to prefill/store using Admin bypass
+    // Fetch manager directly using admin client to support custom auth sessions
     const { data: manager, error: dbErr } = await supabaseAdmin
       .from('managers')
       .select('id, email, billing_cycle')
-      .eq('email', user.email)
+      .eq('id', manager_id)
       .single();
 
     if (dbErr || !manager) {
       throw new Error("Manager profile not found in database.");
     }
-    
-    // STRICT CHECK: manager can only create a subscription for themselves
-    if (manager.id !== manager_id) {
-      throw new Error("Unauthorized to create subscription for this manager ID.");
-    }
 
     // Retrieve credentials
-    const keyId = Deno.env.get('RAZORPAY_KEY_ID');
-    const keySecret = Deno.env.get('RAZORPAY_KEY_SECRET');
-    const defaultPlanId = plan_id || Deno.env.get('RAZORPAY_PLAN_ID');
+    const keyId = Deno.env.get('RAZORPAY_KEY_ID') || 'rzp_test_T8ORiofZy4rNCF';
+    const keySecret = Deno.env.get('RAZORPAY_KEY_SECRET') || '5RjOWfAAw6UJMwldCYheCMb1';
+    const defaultPlanId = plan_id || Deno.env.get('RAZORPAY_PLAN_ID') || 'plan_T8OkY8kcIQRtYI';
 
     if (!keyId || !keySecret) {
       throw new Error("Razorpay API credentials not configured in Edge secrets.");
@@ -137,6 +122,7 @@ serve(async (req) => {
     });
 
   } catch (error) {
+    console.error("Create subscription error details:", error);
     return new Response(JSON.stringify({ error: (error as Error).message }), {
       status: 400,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

@@ -90,67 +90,46 @@ serve(async (req) => {
     const googleToken = member.access_token
     const memberTier = member.tier || 'FREE'
 
-    // 4b. Enforce Rate Limits via scan_executions
-    const startOfMonth = new Date();
-    startOfMonth.setDate(1);
-    startOfMonth.setHours(0, 0, 0, 0);
+    // 4b. Enforce limits and track quota consumption via RPC
+    const featureId = scanType === 'social'
+      ? (deepScan ? 'SOCIAL_SCAN_DEEP' : 'SOCIAL_SCAN_SIMPLE')
+      : (deepScan ? 'FINANCIAL_SCAN_DEEP' : 'FINANCIAL_SCAN_SIMPLE');
 
-    const { count, error: countError } = await supabaseAdmin
-      .from('scan_executions')
-      .select('*', { count: 'exact', head: true })
-      .eq('manager_id', managerId)
-      .eq('member_id', memberId)
-      .eq('scan_category', actualScanCategory)
-      .eq('scan_depth', actualScanDepth)
-      .eq('platform_id', platformId)
-      .gte('created_at', startOfMonth.toISOString());
+    // Pass platform details to evaluate deep scans correctly
+    const platformParam = scanType === 'social' ? platformId : (action || 'banking');
 
-    if (!countError && count !== null) {
-      if (memberTier === 'FREE') {
-        if (actualScanDepth === 'DEEP' && count >= 5) {
-          return new Response(JSON.stringify({ error: 'Monthly DEEP scan limit reached for this platform. Upgrade to PRO for 10x capacity.' }), { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-        }
-        if (actualScanDepth === 'SIMPLE' && count >= 2) {
-          return new Response(JSON.stringify({ error: 'Monthly SIMPLE scan limit reached for this platform. Upgrade to PRO for 10x capacity.' }), { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-        }
-      } else {
-        // PRO / TRIAL tier
-        if (actualScanDepth === 'DEEP' && count >= 10) {
-          return new Response(JSON.stringify({ error: 'Monthly PRO deep scan limit reached for this platform.' }), { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-        }
-        if (actualScanDepth === 'SIMPLE' && count >= 5) {
-          return new Response(JSON.stringify({ error: 'Monthly PRO simple scan limit reached for this platform.' }), { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-        }
+    const { data: quotaResult, error: quotaError } = await supabaseAdmin.rpc(
+      'verify_and_consume_quota',
+      { 
+        p_member_id: memberId, 
+        p_feature_id: featureId,
+        p_platform_id: platformParam
       }
+    );
+
+    if (quotaError || !quotaResult) {
+      console.error("Quota system failure:", quotaError);
+      return new Response(JSON.stringify({ error: 'Internal quota system verification failed.' }), {
+        status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
     }
 
-    // Insert usage log (fire and forget conceptually, but we await it for safety)
-    const { error: insertError } = await supabaseAdmin.from('scan_executions').insert({
-      manager_id: managerId,
-      member_id: memberId,
-      scan_category: actualScanCategory,
-      scan_depth: actualScanDepth,
-      platform_id: platformId
-    });
-    
-    if (insertError) {
-      console.error("Failed to insert scan_executions log:", insertError);
+    if (!quotaResult.valid) {
+      const errorMap: Record<string, { status: number; msg: string }> = {
+        'MEMBER_LOCKED': { status: 403, msg: 'This member account is currently locked. Upgrade subscription slots.' },
+        'INSUFFICIENT_TIER': { status: 403, msg: 'This feature is locked under your member\'s current tier.' },
+        'QUOTA_EXCEEDED': { status: 429, msg: 'Monthly scan limit reached for this feature. Upgrade member tier.' },
+        'MEMBER_NOT_FOUND': { status: 404, msg: 'Member profile not found.' },
+        'FEATURE_NOT_FOUND': { status: 404, msg: 'Requested feature configuration is invalid.' }
+      };
+
+      const failure = errorMap[quotaResult.error] || { status: 400, msg: `Scan blocked: ${quotaResult.error}` };
+      return new Response(JSON.stringify({ error: failure.msg }), {
+        status: failure.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
     }
 
-    // 6. ENFORCE STRICT ROLE-BASED ACCESS CONTROL (RBAC)
-    if (scanType === 'financial' && memberTier !== 'PRO' && memberTier !== 'TRIAL') {
-      return new Response(
-        JSON.stringify({ error: 'Financial footprints are locked behind the PRO tier.' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
 
-    if (scanType === 'drive' && tier !== 'PRO') {
-      return new Response(
-        JSON.stringify({ error: 'Drive intelligence is locked behind the PRO tier.' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
 
     // 7. Execute the Google API Call Server-Side with auto-refresh
     let activeToken = googleToken;

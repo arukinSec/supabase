@@ -89,7 +89,7 @@ serve(async (req) => {
         
         let query = supabase.from('managers').update({
           tier: 'PRO',
-          razorpay_subscription_id: orderId, // Store the order ID here
+          razorpay_order_id: orderId, // Store the order ID here
           pro_expires_at: proExpiresAt,
           billing_cycle: isWeekly ? 'weekly' : 'yearly'
         });

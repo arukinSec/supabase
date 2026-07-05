@@ -47,13 +47,6 @@ serve(async (req) => {
           .in("id", chunk);
 
         if (updateError) throw updateError;
-
-        const { error: memberError } = await supabase
-          .from("members")
-          .update({ tier: "FREE" })
-          .in("manager_id", chunk);
-
-        if (memberError) throw memberError;
       }
       
       totalProcessed += expiredIds.length;
