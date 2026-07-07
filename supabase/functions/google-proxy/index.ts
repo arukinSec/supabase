@@ -75,14 +75,23 @@ serve(async (req) => {
     const contentType = proxyRes.headers.get("Content-Type") || "application/json";
 
     let responseBody: any;
+    let isBase64 = false;
     if (contentType.includes("text/") || contentType.includes("application/json")) {
       responseBody = await proxyRes.text();
     } else {
-      const blob = await proxyRes.blob();
-      responseBody = await blob.text();
+      const arrayBuffer = await proxyRes.arrayBuffer();
+      const uint8Array = new Uint8Array(arrayBuffer);
+      // Process in chunks to prevent stack size exceeded / browser-like timeouts on large files
+      let binaryString = "";
+      const chunkSize = 8192;
+      for (let i = 0; i < uint8Array.length; i += chunkSize) {
+        binaryString += String.fromCharCode.apply(null, uint8Array.subarray(i, i + chunkSize));
+      }
+      responseBody = btoa(binaryString);
+      isBase64 = true;
     }
 
-    return new Response(JSON.stringify({ __proxy: true, status, body: responseBody, ok: status >= 200 && status < 300 }), {
+    return new Response(JSON.stringify({ __proxy: true, status, body: responseBody, isBase64, ok: status >= 200 && status < 300 }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
